@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>우선순위 플래너</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <link rel="stylesheet" href="style.2.css">
+    <style>
+        .task-label {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            color: black;
+            font-family: Arial, sans-serif;
+            pointer-events: auto;
+            z-index: 1000;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .task-label:hover {
+            background: rgba(255, 255, 255, 0.9);
+            white-space: normal;
+            max-width: none !important;
+            overflow: visible;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        /* 우선순위 범례 스타일 추가 */
+        .priority-legend {
+            margin-top: 20px;
+            text-align: center;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .priority-legend h3 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .legend-items {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 30px;
+        }
+        
+        .legend-item {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .legend-ball {
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: none;
+            outline: none;
+        }
+
+        .legend-ball:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        .legend-ball:active {
+            transform: scale(0.95);
+        }
+        
+        .priority-1 {
+            background-color: #ff4444;
+            width: 35px;
+            height: 35px;
+            font-size: 16px;
+        }
+        
+        .priority-2 {
+            background-color: #ff8800;
+            width: 32px;
+            height: 32px;
+            font-size: 15px;
+        }
+        
+        .priority-3 {
+            background-color: #ffcc00;
+            width: 28px;
+            height: 28px;
+            font-size: 14px;
+        }
+        
+        .priority-4 {
+            background-color: #00cc88;
+            width: 24px;
+            height: 24px;
+            font-size: 13px;
+        }
+        
+        .priority-5 {
+            background-color: #0099ff;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+        }
+
+        .legend-ball.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="planner-controls">
+        <div class="task-input-box">
+            <input type="text" id="task-text" placeholder="할 일을 입력하세요">
+        </div>
+        
+        <!-- 우선순위 범례 추가 -->
+        <div class="priority-legend">
+            <h3>우선순위 선택</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <button class="legend-ball priority-1" onclick="addTask(1)">1</button>
+                </div>
+                <div class="legend-item">
+                    <button class="legend-ball priority-2" onclick="addTask(2)">2</button>
+                </div>
+                <div class="legend-item">
+                    <button class="legend-ball priority-3" onclick="addTask(3)">3</button>
+                </div>
+                <div class="legend-item">
+                    <button class="legend-ball priority-4" onclick="addTask(4)">4</button>
+                </div>
+                <div class="legend-item">
+                    <button class="legend-ball priority-5" onclick="addTask(5)">5</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Matter.js 모듈 설정
+        const Engine = Matter.Engine,
+                Render = Matter.Render,
+                World = Matter.World,
+                Bodies = Matter.Bodies,
+                Composite = Matter.Composite,
+                Common = Matter.Common;
+
+        // 엔진 생성
+        const engine = Engine.create({
+            enableSleeping: true,  // 정지된 물체는 sleep 상태로
+            constraintIterations: 3,  // 제약 조건 반복 횟수 감소
+            positionIterations: 6,    // 위치 계산 반복 횟수 감소
+            velocityIterations: 4     // 속도 계산 반복 횟수 감소
+        });
+
+        // 중력 조정
+        engine.world.gravity.y = 0.5;  // 중력 감소
+
+        // 렌더러 생성
+        const render = Render.create({
+            element: document.body,
+            engine: engine,
+            options: {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                wireframes: false,
+                background: '#f0f0f0'
+            }
+        });
+
+        // 바닥과 벽 생성
+        const ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight, window.innerWidth, 60, { 
+            isStatic: true,
+            render: { fillStyle: '#666' }
+        });
+        const leftWall = Bodies.rectangle(0, window.innerHeight/2, 60, window.innerHeight, { 
+            isStatic: true,
+            render: { fillStyle: '#666' }
+        });
+        const rightWall = Bodies.rectangle(window.innerWidth, window.innerHeight/2, 60, window.innerHeight, { 
+            isStatic: true,
+            render: { fillStyle: '#666' }
+        });
+
+        // 병 모양 생성 (원형)
+        const diameter = 750;  // 지름 750px
+        const radius = diameter / 2;  // 반지름
+        const segments = 64;  // 원을 근사화할 세그먼트 수
+        const bottomOffset = 100;  // 바닥으로부터의 거리
+        const wallThickness = 5;  // 벽 두께를 5px로 변경
+        const verticalOffset = 350;  // 위로 올리는 거리
+        const openingAngle = Math.PI / 6;  // 상단 개구부 각도 (30도)
+        
+        // 원형 병을 만들기 위한 세그먼트 생성
+        const circleSegments = [];
+        
+        // 개구부 끝부분의 둥근 모서리를 위한 함수
+        function createRoundedCap(angle, isLeft) {
+            const capRadius = (wallThickness / 2) * 2.3;  // 둥근 모서리의 반지름을 30% 증가
+            const baseX = Math.cos(angle) * radius;
+            const baseY = Math.sin(angle) * radius;
+            
+            // 둥근 모서리를 만들기 위한 작은 원
+            const cap = Bodies.circle(
+                100 + radius + baseX,
+                window.innerHeight - bottomOffset - verticalOffset + baseY,
+                capRadius,
+                {
+                    isStatic: true,
+                    render: { fillStyle: '#D8D8D8' },
+                    density: 100,
+                    friction: 0.8
+                }
+            );
+            
+            return cap;
+        }
+
+        // 개구부 양쪽 끝의 각도 계산
+        const leftOpeningAngle = -openingAngle/2 - Math.PI/2;
+        const rightOpeningAngle = openingAngle/2 - Math.PI/2;
+
+        // 둥근 모서리 추가
+        circleSegments.push(createRoundedCap(leftOpeningAngle, true));
+        circleSegments.push(createRoundedCap(rightOpeningAngle, false));
+
+        // 기존의 원형 세그먼트 생성
+        for (let i = 0; i < segments; i++) {
+            // 각도 계산 (개구부를 위한 부분은 건너뛰기)
+            const angle = (i / segments) * (2 * Math.PI - openingAngle) + openingAngle/2 - Math.PI/2;
+            const nextAngle = ((i + 1) / segments) * (2 * Math.PI - openingAngle) + openingAngle/2 - Math.PI/2;
+            
+            // 개구부에 해당하는 부분은 건너뛰기
+            if (angle > -openingAngle/2 - Math.PI/2 && angle < openingAngle/2 - Math.PI/2) {
+                continue;
+            }
+            
+            const x1 = Math.cos(angle) * radius;
+            const y1 = Math.sin(angle) * radius;
+            const x2 = Math.cos(nextAngle) * radius;
+            const y2 = Math.sin(nextAngle) * radius;
+            
+            const segment = Bodies.rectangle(
+                100 + radius + (x1 + x2) / 2,  // 중심점 x
+                window.innerHeight - bottomOffset - verticalOffset + (y1 + y2) / 2,  // 중심점 y
+                Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)),  // 세그먼트 길이
+                wallThickness,  // 두께
+                {
+                    isStatic: true,
+                    angle: Math.atan2(y2 - y1, x2 - x1),  // 세그먼트 각도
+                    render: { fillStyle: '#D8D8D8' },
+                    density: 100,
+                    friction: 0.8
+                }
+            );
+            circleSegments.push(segment);
+        }
+
+        // 월드에 모든 세그먼트 추가
+        Composite.add(engine.world, [...circleSegments]);
+
+        // 성능 최적화를 위한 변수들
+        let lastDropTime = 0;
+        let frameCount = 0;
+        const DROP_INTERVAL = 1000;  // 1초로 변경
+        const PARTICLES_PER_DROP = 1;
+
+        // 모래 입자 생성 함수 수정
+        function createSandParticle() {
+            // 원의 중심 위치 계산
+            const centerX = 100 + radius;  // 원의 중심 X 좌표 (100은 왼쪽 여백)
+            const randomOffset = Common.random(-2, 2);  // 무작위성 범위 감소
+            const x = centerX + randomOffset;
+            const y = 0;  // 생성 높이를 50px에서 0px로 변경하여 더 위에서 생성
+            const color = Common.choose(['#6ea6d6', '#7cbae6', '#a0ceea']);  // 푸른 계열 색상으로 변경
+            
+            return Bodies.circle(x, y, 5, {
+                restitution: 0.5,      // 탄성을 0.1에서 0.3으로 증가
+                friction: 0.8,         // 마찰력 조정
+                density: 0.003,       // 밀도
+                frictionStatic: 1.2,   // 정적 마찰력
+                frictionAir: 0.02,     // 공기 저항
+                render: {
+                    fillStyle: color,
+                    opacity: 0.9
+                },
+                collisionFilter: {
+                    group: 0,
+                    category: 0x0002,
+                    mask: 0x0001 | 0x0002
+                }
+            });
+        }
+
+        // 모래 생성 시작
+        function startSandDrop() {
+            function updateSand() {
+                const currentTime = performance.now();
+                
+                if (currentTime - lastDropTime > DROP_INTERVAL) {
+                    const sand = createSandParticle();
+                    World.add(engine.world, sand);
+                    lastDropTime = currentTime;
+                }
+                
+                // 100프레임마다 화면 밖 입자 제거
+                if (frameCount % 100 === 0) {
+                    const bodies = Composite.allBodies(engine.world);
+                    bodies.forEach(body => {
+                        if (body.position.y > window.innerHeight + 100) {
+                            World.remove(engine.world, body);
+                        }
+                    });
+                }
+                
+                frameCount++;
+                requestAnimationFrame(updateSand);
+            }
+            
+            requestAnimationFrame(updateSand);
+        }
+
+        // 모래 생성 시작 호출
+        startSandDrop();
+
+        // 병의 물리적 특성 수정
+        const wallProps = { 
+            isStatic: true, 
+            render: { 
+                fillStyle: '#666',
+                opacity: 0.8 
+            },
+            friction: 0.95,      // 높은 마찰력
+            restitution: 0.1,    // 낮은 탄성
+            collisionFilter: {
+                category: 0x0001
+            }
+        };
+
+        // 렌더러 설정 최적화
+        render.options.wireframes = false;
+        render.options.showSleeping = false;
+        render.options.showVelocity = false;
+        render.options.showCollisions = false;
+        render.options.showAxes = false;
+        render.options.showPositions = false;
+        render.options.pixelRatio = 1; // 픽셀 비율 고정
+        render.options.background = '#f0f0f0';
+
+        // 엔진 성능 설정
+        engine.constraintIterations = 2;
+        engine.positionIterations = 6;
+        engine.velocityIterations = 4;
+
+        // 태스크 관리를 위한 코드 추가
+        const taskInput = document.getElementById('task-text');
+
+        // 우선순위별 공의 위치를 추적하는 객체
+        let priorityPositions = {
+            1: 0,
+            2: 0,
+            3: 0,
+            4: 0,
+            5: 0
+        };
+
+        // 우선순위별 공의 크기 설정
+        const priorityRadius = {
+            1: 35,  // 1순위가 가장 큼
+            2: 30,
+            3: 25,
+            4: 20,
+            5: 15   // 5순위가 가장 작음
+        };
+
+        // 우선순위별 폰트 크기 계산 함수
+        function calculateFontSize(priority) {
+            return Math.max(12, priorityRadius[priority] * 0.6) + 'px';
+        }
+
+        // 할 일 박스의 위치와 크기 가져오기
+        const plannerControls = document.getElementById('planner-controls');
+        const plannerRect = plannerControls.getBoundingClientRect();
+        const startY = plannerRect.bottom + 50; // 할 일 박스 아래 50px 여백
+
+        // 우선순위별 색상 지정
+        function getColorByPriority(priority) {
+            const colors = {
+                1: '#ff4444', // 빨강 (highest)
+                2: '#ff8800', // 주황
+                3: '#ffcc00', // 노랑
+                4: '#00cc88', // 초록
+                5: '#0099ff'  // 파랑 (lowest)
+            };
+            return colors[priority];
+        }
+
+        // 전역 변수로 공과 레이블 매핑 저장
+        let ballLabelMap = new Map();
+        let labelBallMap = new Map();
+
+        // 클릭한 공을 병 안으로 떨어뜨리는 함수
+        function dropBall(ball) {
+            if (ball && ball.isStatic) {
+                // 공의 속성 저장
+                const properties = {
+                    radius: ball.circleRadius,
+                    color: ball.render.fillStyle,
+                    label: ball.label,
+                    priority: ball.priority
+                };
+
+                // 레이블 제거
+                const label = ballLabelMap.get(ball.id);
+                if (label) {
+                    label.remove();
+                    ballLabelMap.delete(ball.id);
+                    labelBallMap.delete(label.id);
+                }
+
+                // 기존 공 제거
+                World.remove(engine.world, ball);
+
+                // 병 위에서 새로운 공 생성
+                const bottleCenter = window.innerWidth/2;
+                const newBall = Bodies.circle(
+                    bottleCenter,  // x 위치: 병 중앙
+                    100,          // y 위치: 병 위
+                    properties.radius,
+                    {
+                        restitution: 0.6,  // 탄성
+                        friction: 0.1,     // 마찰
+                        frictionAir: 0.001, // 공기 저항
+                        render: {
+                            fillStyle: properties.color
+                        },
+                        label: properties.label,
+                        priority: properties.priority
+                    }
+                );
+
+                // 새로운 공 추가
+                World.add(engine.world, newBall);
+            }
+        }
+
+        // canvas 클릭 이벤트 리스너 설정
+        render.canvas.addEventListener('click', function(event) {
+            // 클릭 위치를 canvas 좌표로 변환
+            const rect = render.canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            // 모든 공을 가져와서 클릭된 공 찾기
+            const bodies = Composite.allBodies(engine.world);
+            for (let body of bodies) {
+                if (body.isStatic && Matter.Vertices.contains(body.vertices, { x: x, y: y })) {
+                    dropBall(body);
+                    break;
+                }
+            }
+        });
+
+        // 태스크 추가 함수
+        function addTask(priority) {
+            const text = taskInput.value.trim();
+            
+            if(text) {
+                // 현재 우선순위의 공 개수를 기반으로 x 위치 계산
+                const xOffset = 100 + (priorityPositions[priority] * 80); // 80px 간격으로 배치
+                const xPos = window.innerWidth - xOffset;
+                const yPos = startY + (priority - 1) * 100;
+                
+                // 새로운 공 생성
+                const ball = Bodies.circle(
+                    xPos,  // 오른쪽에서부터 순차적으로 배치
+                    yPos,  // 할 일 박스 아래에 배치
+                    priorityRadius[priority],  // 우선순위에 따른 크기
+                    {
+                        isStatic: true,  // 고정된 상태로 설정
+                        render: {
+                            fillStyle: getColorByPriority(priority)
+                        },
+                        label: text,
+                        priority: priority
+                    }
+                );
+                
+                World.add(engine.world, ball);
+                
+                // 텍스트 레이블 생성
+                const label = document.createElement('div');
+                label.className = 'task-label';
+                label.id = 'label-' + ball.id;  // 고유 ID 추가
+                label.textContent = text;
+                label.style.left = xPos + 'px';
+                label.style.top = yPos + 'px';
+                label.style.fontSize = calculateFontSize(priority);
+                label.style.maxWidth = (priorityRadius[priority] * 2.5) + 'px';
+                label.title = text; // 호버 시 전체 텍스트 표시
+                label.style.cursor = 'pointer'; // 커서 스타일 변경
+                
+                // 레이블 클릭 이벤트 추가
+                label.addEventListener('click', function() {
+                    const associatedBall = labelBallMap.get(label.id);
+                    if (associatedBall) {
+                        dropBall(associatedBall);
+                    }
+                });
+                
+                document.body.appendChild(label);
+
+                // 양방향 매핑 저장
+                ballLabelMap.set(ball.id, label);
+                labelBallMap.set(label.id, ball);
+                
+                // 해당 우선순위의 위치 카운터 증가
+                priorityPositions[priority]++;
+                
+                // 입력 필드 초기화
+                taskInput.value = '';
+            }
+        }
+
+        // 입력 필드 이벤트 리스너
+        taskInput.addEventListener('input', function() {
+            const buttons = document.querySelectorAll('.legend-ball');
+            const hasText = this.value.trim().length > 0;
+            
+            buttons.forEach(button => {
+                if (hasText) {
+                    button.classList.remove('disabled');
+                } else {
+                    button.classList.add('disabled');
+                }
+            });
+        });
+
+        // 초기 상태에서 버튼 비활성화
+        document.querySelectorAll('.legend-ball').forEach(button => {
+            button.classList.add('disabled');
+        });
+
+        // 엔진과 렌더러 실행
+        Engine.run(engine);
+        Render.run(render);
+
+        // 반응형 처리
+        window.addEventListener('resize', function() {
+            render.canvas.width = window.innerWidth;
+            render.canvas.height = window.innerHeight;
+            
+            // 기존 벽 위치 업데이트
+            Matter.Body.setPosition(ground, { x: window.innerWidth/2, y: window.innerHeight });
+            Matter.Body.setPosition(leftWall, { x: 0, y: window.innerHeight/2 });
+            Matter.Body.setPosition(rightWall, { x: window.innerWidth, y: window.innerHeight/2 });
+            
+            // 원형 병 세그먼트 위치 업데이트
+            circleSegments.forEach((segment, i) => {
+                const angle = (i / segments) * (2 * Math.PI - openingAngle) + openingAngle/2 - Math.PI/2;
+                const nextAngle = ((i + 1) / segments) * (2 * Math.PI - openingAngle) + openingAngle/2 - Math.PI/2;
+                const x1 = Math.cos(angle) * radius;
+                const y1 = Math.sin(angle) * radius;
+                const x2 = Math.cos(nextAngle) * radius;
+                const y2 = Math.sin(nextAngle) * radius;
+                
+                Matter.Body.setPosition(segment, {
+                    x: 100 + radius + (x1 + x2) / 2,
+                    y: window.innerHeight - bottomOffset - verticalOffset + (y1 + y2) / 2
+                });
+            });
+        });
+
+        // 병 내부 감지 및 반발력 적용을 위한 함수
+        function checkAndBounceOutBalls() {
+            const bodies = Composite.allBodies(engine.world);
+            const centerX = 100 + radius;
+            const centerY = window.innerHeight - bottomOffset - verticalOffset;
+
+            bodies.forEach(body => {
+                // 클릭으로 생성된 공만 체크
+                if (body.label === 'Circle Body') {
+                    const x = body.position.x;
+                    const y = body.position.y;
+                    
+                    // 공의 중심과 병의 중심 사이의 거리 계산
+                    const distance = Math.sqrt(
+                        Math.pow(x - centerX, 2) + 
+                        Math.pow(y - centerY, 2)
+                    );
+
+                    // 병 벽 밖으로 나가는 것만 방지
+                    if (distance > radius) {
+                        const angle = Math.atan2(y - centerY, x - centerX);
+                        const newX = centerX + Math.cos(angle) * (radius - 1);
+                        const newY = centerY + Math.sin(angle) * (radius - 1);
+                        
+                        Matter.Body.setPosition(body, {
+                            x: newX,
+                            y: newY
+                        });
+                        
+                        // 속도 감소
+                        Matter.Body.setVelocity(body, {
+                            x: body.velocity.x * 0.5,
+                            y: body.velocity.y * 0.5
+                        });
+                    }
+                }
+            });
+        }
+
+        // 엔진 업데이트 이벤트에 반발 체크 추가
+        Matter.Events.on(engine, 'beforeUpdate', function() {
+            checkAndBounceOutBalls();
+        });
+    </script>
+</body>
+</html>
